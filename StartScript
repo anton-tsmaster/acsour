@@ -1,0 +1,75 @@
+#!/bin/bash
+
+#следующий блок запускаем, если нужна "чистая" сборка образов и запуска контейнеров
+#---------------------------------------------
+#docker rm -f $(docker ps -a -q)
+#docker rmi $(docker images -q)
+#---------------------------------------------
+#следующий блок раскоментируем только когда нужна пераоначальная сборка контейнеров. Актуально при переносе или обновлении 1С
+#Особое внимание обращаем на имя создаваемого образа, т.к. к нему привязывается запускаемый контейнер
+#----------------------------------------------
+#cd 1cupd
+#docker build -t my-1cupd .
+#cd ..
+#cd haproxy
+#docker build -t my-haproxy .
+#cd ..
+#docker build -t my-apache-1c .
+#----------------------------------------------
+
+FILE=databases #список баз для деплоя
+FILEHAPROXY=./haproxy/haproxy_sample.cfg #начальный конфиг haproxy дял дальнейшего добавления хостов
+STARTPORT=8000 #начальный порт для контейнеров
+NEWHAPROXYCFG=./haproxy/haproxy.cfg #файл, куда сохраняем конфиг haproxy
+
+cp -f $FILEHAPROXY $NEWHAPROXYCFG
+
+inc=$STARTPORT
+#собираем секцию frontend в конфиге haproxy
+    while read LINE; do
+	inc=$[inc+1]
+	echo "acl is_$LINE url_sub -i \"$LINE\"" >> $NEWHAPROXYCFG
+	echo "use_backend base_$LINE if is_$LINE" >> $NEWHAPROXYCFG
+	echo " " >> $NEWHAPROXYCFG
+    done < $FILE
+#дописываем правила перенаправления на хост обновления 1с и на заглушку (сайт)
+echo "acl is_distribupd hdr_end(host) -i \"distribbase.acsour.com\"" >> $NEWHAPROXYCFG
+echo "use_backend bk_distribupd" >> $NEWHAPROXYCFG
+echo " " >> $NEWHAPROXYCFG
+echo "default_backend acsour_site" >> $NEWHAPROXYCFG
+echo " " >> $NEWHAPROXYCFG
+	
+#дописываем backend сайта для заглушки
+inc=$STARTPORT
+echo "backend acsour_site" >> $NEWHAPROXYCFG
+echo "balance roundrobin" >> $NEWHAPROXYCFG
+echo "server acsour_site_server acsour.com:443 ssl" >> $NEWHAPROXYCFG
+echo " " >> $NEWHAPROXYCFG
+
+#перечисляем бэкэнды для баз
+    while read LINE; do
+	inc=$[inc+1]
+	echo "backend base_$LINE" >> $NEWHAPROXYCFG
+	echo "balance roundrobin" >> $NEWHAPROXYCFG
+	echo "server server_$LINE localhost:$inc ssl" >> $NEWHAPROXYCFG
+	echo " " >> $NEWHAPROXYCFG
+    done < $FILE
+# дописываем бэкэнд для обновления 1с
+    
+echo "backend bk_distribupd" >> $NEWHAPROXYCFG
+echo "balance roundrobin" >> $NEWHAPROXYCFG
+echo " server server_distribupd localhost:9000 ssl" >> $NEWHAPROXYCFG
+
+#запускаем контейнеры с web-серверами 1с. Передаем в них переменную окружения (имя базы)
+inc=$STARTPORT
+    while read LINE; do
+	inc=$[inc+1]
+	#export VAR_BASE=$LINE
+	echo "Run server $LINE on port: $inc"
+	docker run -d -e "BASE_NAME=$LINE" --add-host 1csrv01:192.168.20.3 --add-host 1csrv02:192.168.20.4 --add-host distraibbase.acsour.com:192.168.20.100 --rm --publish $inc:443 my-apache-1c #вместо dns сразу указываем адреса хостов
+    done < $FILE
+# запускаем контейнеры с обнолвением 1с и с haproxy
+echo "Run 1CUPD Server"
+docker run -d --rm --publish 9000:443 my-1cupd
+echo "run haproxy"
+docker run -d --rm --network host my-haproxy
