@@ -4,6 +4,7 @@
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       base="/BASE_NAME"
       ib="Srvr=1csrv01;Ref=BASE_NAME"
+      pubdst="https://distribbase.acsour.com/distribupd/setuptc.zip"
       enableStandardOData="true">
    <ws publishExtensionsByDefault="true" />
    <httpServices publishByDefault="true" publishExtensionsByDefault="true"/>
